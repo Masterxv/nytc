@@ -1,0 +1,128 @@
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { fileURLToPath } from "url";
+import compression from "compression";
+import dotenv from "dotenv";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load local env first, then fallback to default dotenv behavior.
+dotenv.config({ path: path.join(__dirname, ".env.local") });
+dotenv.config();
+
+async function startServer() {
+  const app = express();
+  const port = Number(process.env.PORT || 3000);
+
+  app.use(compression());
+  app.use(express.json());
+
+  app.post("/api/alert", async (req, res) => {
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: "Missing message" });
+    }
+
+    const results = {
+      whatsapp: "pending",
+      telegram: "pending",
+    };
+
+    const waUrl = process.env.WA_API_URL;
+    const waSession = process.env.WA_SESSION_ID;
+    const waTarget = process.env.WA_TARGET_NUMBER;
+
+    if (waUrl && waSession && waTarget) {
+      try {
+        const waResponse = await fetch(waUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: waSession,
+            to: waTarget,
+            text: message,
+          }),
+        });
+
+        results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
+      } catch (err) {
+        console.error("WhatsApp alert error:", err instanceof Error ? err.message : err);
+        results.whatsapp = "error";
+      }
+    } else {
+      results.whatsapp = "skipped (missing WA_API_URL/WA_SESSION_ID/WA_TARGET_NUMBER)";
+    }
+
+    const tgToken = process.env.TELEGRAM_TOKEN;
+    const tgChatId = process.env.TELEGRAM_CHAT_ID;
+
+    if (tgToken && tgChatId) {
+      try {
+        const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
+        const tgResponse = await fetch(tgUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: tgChatId,
+            text: message,
+            parse_mode: "HTML",
+          }),
+        });
+
+        results.telegram = tgResponse.ok ? "success" : `failed (${tgResponse.status})`;
+      } catch (err) {
+        console.error("Telegram alert error:", err instanceof Error ? err.message : err);
+        results.telegram = "error";
+      }
+    } else {
+      results.telegram = "skipped (missing TELEGRAM_TOKEN/TELEGRAM_CHAT_ID)";
+    }
+
+    return res.json(results);
+  });
+
+  app.get("/api/klines", async (req, res) => {
+    const { symbol, interval, limit } = req.query;
+
+    if (!symbol || !interval) {
+      return res.status(400).json({ error: "Missing symbol or interval" });
+    }
+
+    try {
+      const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit || 100}`;
+      const response = await fetch(binanceUrl);
+
+      if (!response.ok) {
+        throw new Error(`Binance API responded with ${response.status}`);
+      }
+
+      const data = await response.json();
+      return res.json(data);
+    } catch (error) {
+      console.error("Proxy error:", error instanceof Error ? error.message : error);
+      return res.status(500).json({ error: "Failed to fetch data from Binance" });
+    }
+  });
+
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+  }
+
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${port}`);
+  });
+}
+
+startServer();
