@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -7,25 +7,15 @@ import compression from "compression";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-interface KlinesQuery {
-  symbol?: string;
-  interval?: string;
-  limit?: string;
-}
-
-interface AlertRequest {
-  message: string;
-}
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(compression());
+  app.use(compression()); // Compress responses for low-bandwidth/low-power devices
   app.use(express.json());
 
   // Alerting Endpoint
-  app.post("/api/alert", async (req: Request<{}, {}, AlertRequest>, res: Response) => {
+  app.post("/api/alert", async (req, res) => {
     const { message } = req.body;
     
     if (!message) {
@@ -53,9 +43,8 @@ async function startServer() {
         })
       });
       results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("WhatsApp alert error:", errorMessage);
+    } catch (err: any) {
+      console.error("WhatsApp alert error:", err.message);
       results.whatsapp = "error";
     }
 
@@ -75,17 +64,16 @@ async function startServer() {
         })
       });
       results.telegram = tgResponse.ok ? "success" : `failed (${tgResponse.status})`;
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("Telegram alert error:", errorMessage);
+    } catch (err: any) {
+      console.error("Telegram alert error:", err.message);
       results.telegram = "error";
     }
 
     res.json(results);
   });
 
-  // API Proxy for Binance
-  app.get("/api/klines", async (req: Request<{}, {}, {}, KlinesQuery>, res: Response) => {
+  // API Proxy for Binance to avoid CORS issues
+  app.get("/api/klines", async (req, res) => {
     const { symbol, interval, limit } = req.query;
     
     if (!symbol || !interval) {
@@ -102,9 +90,8 @@ async function startServer() {
       
       const data = await response.json();
       res.json(data);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error("Proxy error:", errorMessage);
+    } catch (error: any) {
+      console.error("Proxy error:", error.message);
       res.status(500).json({ error: "Failed to fetch data from Binance" });
     }
   });
