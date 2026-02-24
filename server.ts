@@ -3,9 +3,13 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import compression from "compression";
+import dotenv from "dotenv";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, ".env.local") });
+dotenv.config();
 
 async function startServer() {
   const app = express();
@@ -27,13 +31,14 @@ async function startServer() {
       telegram: "pending"
     };
 
-    // WhatsApp Alert
-    try {
-      const waUrl = process.env.WA_API_URL || "https://shxsyj-5001.csb.app/message/send-text";
-      const waSession = process.env.WA_SESSION_ID || "eth1";
-      const waTarget = process.env.WA_TARGET_NUMBER || "120363403445687742@g.us";
+    const waUrl = process.env.WA_API_URL;
+    const waSession = process.env.WA_SESSION_ID;
+    const waTarget = process.env.WA_TARGET_NUMBER;
 
-      const waResponse = await fetch(waUrl, {
+    // WhatsApp Alert
+    if (waUrl && waSession && waTarget) {
+      try {
+        const waResponse = await fetch(waUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -42,19 +47,24 @@ async function startServer() {
           text: message
         })
       });
-      results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
-    } catch (err: any) {
-      console.error("WhatsApp alert error:", err.message);
-      results.whatsapp = "error";
+        results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
+      } catch (err: any) {
+        console.error("WhatsApp alert error:", err.message);
+        results.whatsapp = "error";
+      }
+    } else {
+      results.whatsapp = "skipped (missing WA_API_URL/WA_SESSION_ID/WA_TARGET_NUMBER)";
     }
 
-    // Telegram Alert
-    try {
-      const tgToken = process.env.TELEGRAM_TOKEN || "5805768584:AAHhcNSEvNJtTNsoaC6fbijGcB1hACBrDG0";
-      const tgChatId = process.env.TELEGRAM_CHAT_ID || "-1001530260851";
-      const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
+    const tgToken = process.env.TELEGRAM_TOKEN;
+    const tgChatId = process.env.TELEGRAM_CHAT_ID;
 
-      const tgResponse = await fetch(tgUrl, {
+    // Telegram Alert
+    if (tgToken && tgChatId) {
+      try {
+        const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
+
+        const tgResponse = await fetch(tgUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -63,10 +73,13 @@ async function startServer() {
           parse_mode: "HTML"
         })
       });
-      results.telegram = tgResponse.ok ? "success" : `failed (${tgResponse.status})`;
-    } catch (err: any) {
-      console.error("Telegram alert error:", err.message);
-      results.telegram = "error";
+        results.telegram = tgResponse.ok ? "success" : `failed (${tgResponse.status})`;
+      } catch (err: any) {
+        console.error("Telegram alert error:", err.message);
+        results.telegram = "error";
+      }
+    } else {
+      results.telegram = "skipped (missing TELEGRAM_TOKEN/TELEGRAM_CHAT_ID)";
     }
 
     res.json(results);
