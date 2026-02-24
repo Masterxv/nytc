@@ -1,0 +1,132 @@
+import express, { Request, Response } from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import { fileURLToPath } from "url";
+import compression from "compression";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+interface KlinesQuery {
+  symbol?: string;
+  interval?: string;
+  limit?: string;
+}
+
+interface AlertRequest {
+  message: string;
+}
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(compression());
+  app.use(express.json());
+
+  // Alerting Endpoint
+  app.post("/api/alert", async (req: Request<{}, {}, AlertRequest>, res: Response) => {
+    const { message } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: "Missing message" });
+    }
+
+    const results = {
+      whatsapp: "pending",
+      telegram: "pending"
+    };
+
+    // WhatsApp Alert
+    try {
+      const waUrl = process.env.WA_API_URL || "https://shxsyj-5001.csb.app/message/send-text";
+      const waSession = process.env.WA_SESSION_ID || "eth1";
+      const waTarget = process.env.WA_TARGET_NUMBER || "120363403445687742@g.us";
+
+      const waResponse = await fetch(waUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: waSession,
+          to: waTarget,
+          text: message
+        })
+      });
+      results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("WhatsApp alert error:", errorMessage);
+      results.whatsapp = "error";
+    }
+
+    // Telegram Alert
+    try {
+      const tgToken = process.env.TELEGRAM_TOKEN || "5805768584:AAHhcNSEvNJtTNsoaC6fbijGcB1hACBrDG0";
+      const tgChatId = process.env.TELEGRAM_CHAT_ID || "-1001530260851";
+      const tgUrl = `https://api.telegram.org/bot${tgToken}/sendMessage`;
+
+      const tgResponse = await fetch(tgUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: tgChatId,
+          text: message,
+          parse_mode: "HTML"
+        })
+      });
+      results.telegram = tgResponse.ok ? "success" : `failed (${tgResponse.status})`;
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("Telegram alert error:", errorMessage);
+      results.telegram = "error";
+    }
+
+    res.json(results);
+  });
+
+  // API Proxy for Binance
+  app.get("/api/klines", async (req: Request<{}, {}, {}, KlinesQuery>, res: Response) => {
+    const { symbol, interval, limit } = req.query;
+    
+    if (!symbol || !interval) {
+      return res.status(400).json({ error: "Missing symbol or interval" });
+    }
+
+    try {
+      const binanceUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit || 100}`;
+      const response = await fetch(binanceUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Binance API responded with ${response.status}`);
+      }
+      
+      const data = await response.json();
+      res.json(data);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("Proxy error:", errorMessage);
+      res.status(500).json({ error: "Failed to fetch data from Binance" });
+    }
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    // Serve static files in production
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
