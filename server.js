@@ -43,7 +43,7 @@ async function startServer() {
         })
       });
       results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
-    } catch (err: any) {
+    } catch (err) {
       console.error("WhatsApp alert error:", err.message);
       results.whatsapp = "error";
     }
@@ -64,7 +64,7 @@ async function startServer() {
         })
       });
       results.telegram = tgResponse.ok ? "success" : `failed (${tgResponse.status})`;
-    } catch (err: any) {
+    } catch (err) {
       console.error("Telegram alert error:", err.message);
       results.telegram = "error";
     }
@@ -90,7 +90,7 @@ async function startServer() {
       
       const data = await response.json();
       res.json(data);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Proxy error:", error.message);
       res.status(500).json({ error: "Failed to fetch data from Binance" });
     }
