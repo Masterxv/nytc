@@ -29,23 +29,38 @@ async function startServer() {
 
     // WhatsApp Alert
     try {
-      const waUrl = process.env.WA_API_URL || "https://shxsyj-5001.csb.app/message/send-text";
+      const waBaseUrl = process.env.WA_API_URL || "https://shxsyj-5001.csb.app/message/send-text";
       const waSession = process.env.WA_SESSION_ID || "eth1";
       const waTarget = process.env.WA_TARGET_NUMBER || "120363403445687742@g.us";
+
+      // Try adding session as a query param as well, as some APIs require it there
+      const waUrl = `${waBaseUrl}?session=${waSession}`;
+
+      // WhatsApp uses *bold* instead of <b>bold</b>
+      const waMessage = message
+        .replace(/<b>/g, "*")
+        .replace(/<\/b>/g, "*");
 
       const waResponse = await fetch(waUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sessionId: waSession,
+          session: waSession,
+          sessionId: waSession, // Include both variations for compatibility
           to: waTarget,
-          text: message
+          text: waMessage
         })
       });
-      results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status})`;
+      
+      const waData = await waResponse.json().catch(() => ({}));
+      results.whatsapp = waResponse.ok ? "success" : `failed (${waResponse.status}): ${waData.message || 'Unknown error'}`;
+      
+      if (!waResponse.ok) {
+        console.error("WhatsApp API Error:", waData);
+      }
     } catch (err) {
       console.error("WhatsApp alert error:", err.message);
-      results.whatsapp = "error";
+      results.whatsapp = `error: ${err.message}`;
     }
 
     // Telegram Alert

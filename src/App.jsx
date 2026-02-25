@@ -146,6 +146,38 @@ function getTrendSystem(closes) {
   return { name: 'Trend Follower', signal, color, emoji, details: 'EMA 50/200' };
 }
 
+function getAkMacdAnalysis(closes) {
+  const fast = calculateEma(closes, 12);
+  const slow = calculateEma(closes, 26);
+  const macd = fast.map((f, i) => f - slow[i]);
+  
+  const BB_PERIODS_AK = 10;
+  const BB_DEV_AK = 1.0;
+  
+  const window = macd.slice(-BB_PERIODS_AK);
+  const smaM = window.reduce((a, b) => a + b, 0) / BB_PERIODS_AK;
+  const stdM = getStdev(window);
+  
+  const upper = smaM + (stdM * BB_DEV_AK);
+  const lower = smaM - (stdM * BB_DEV_AK);
+  const currMacd = macd[macd.length - 1];
+
+  let signal = 'NEUTRAL';
+  let color = 'GRAY';
+  let emoji = '⚪';
+
+  if (currMacd >= upper) { signal = 'AK BULLISH'; color = 'LIME'; emoji = '🟢'; }
+  else if (currMacd <= lower) { signal = 'AK BEARISH'; color = 'RED'; emoji = '🔴'; }
+  
+  return { 
+    name: 'AK MACD BB', 
+    signal, 
+    color, 
+    emoji, 
+    details: `MACD: ${currMacd.toFixed(2)} | Z-Pos: ${currMacd > 0 ? 'Above' : 'Below'}` 
+  };
+}
+
 async function fetchAndAnalyze(symbol, interval, systemType) {
   try {
     const response = await fetch(`/api/klines?symbol=${symbol}&interval=${interval}&limit=250`);
@@ -163,6 +195,7 @@ async function fetchAndAnalyze(symbol, interval, systemType) {
 
     if (systemType === 'momentum') systemData = getMomentumSystem(closes);
     else if (systemType === 'volatility') systemData = getVolatilitySystem(highs, lows, closes);
+    else if (systemType === 'ak_macd') systemData = getAkMacdAnalysis(closes);
     else systemData = getTrendSystem(closes);
     
     return {
@@ -179,52 +212,72 @@ async function fetchAndAnalyze(symbol, interval, systemType) {
 // --- APP COMPONENT ---
 
 const SYSTEMS = [
-  { id: 'momentum', interval: '5m', icon: Activity },
-  { id: 'volatility', interval: '15m', icon: ShieldAlert },
-  { id: 'trend', interval: '1h', icon: BarChart3 },
+  { id: 'ak_1m', interval: '1m', icon: Activity },
+  { id: 'ak_5m', interval: '5m', icon: TrendingUp },
+  { id: 'ak_15m', interval: '15m', icon: ShieldAlert },
+  { id: 'ak_1h', interval: '1h', icon: BarChart3 },
+  { id: 'ak_4h', interval: '4h', icon: Clock },
 ];
 const SYMBOL = 'BTCUSDT';
 
 export default function App() {
   const [state, setState] = useState({
-    momentum: null,
-    volatility: null,
-    trend: null,
+    ak_1m: null,
+    ak_5m: null,
+    ak_15m: null,
+    ak_1h: null,
+    ak_4h: null,
   });
   const [loading, setLoading] = useState(true);
   const [liteMode, setLiteMode] = useState(false);
+  const [lastSentAlert, setLastSentAlert] = useState(null);
+  const [alertStatus, setAlertStatus] = useState(null);
   const lastAlerts = useRef({});
 
   const sendAlert = async (systemId, signal, price) => {
+    const time = new Date().toLocaleTimeString();
     const message = `<b>BTC/USDT ${systemId.toUpperCase()} Alert</b>\n` +
                     `Signal: ${signal}\n` +
                     `Price: $${price.toLocaleString()}\n` +
-                    `Time: ${new Date().toLocaleTimeString()}`;
+                    `Time: ${time}`;
     
+    setAlertStatus({ loading: true });
     try {
-      await fetch('/api/alert', {
+      const response = await fetch('/api/alert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message })
       });
+      const data = await response.json();
+      
+      if (response.ok) {
+        setLastSentAlert({ systemId, signal, price, time });
+        setAlertStatus({ 
+          whatsapp: data.whatsapp, 
+          telegram: data.telegram,
+          loading: false 
+        });
+      } else {
+        setAlertStatus({ error: 'Server error', loading: false });
+      }
     } catch (error) {
       console.error('Failed to send alert:', error);
+      setAlertStatus({ error: 'Network error', loading: false });
     }
   };
 
   const updateData = async () => {
     const results = await Promise.all(
       SYSTEMS.map(async (sys) => {
-        const data = await fetchAndAnalyze(SYMBOL, sys.interval, sys.id);
+        // All systems are now AK MACD BB as per user request
+        const data = await fetchAndAnalyze(SYMBOL, sys.interval, 'ak_macd');
         
-        // Check for alerts
-        if (data && data.color !== 'GRAY') {
+        // Check for alerts on ANY trend change
+        if (data) {
           if (lastAlerts.current[sys.id] !== data.signal) {
-            sendAlert(sys.id, data.signal, data.price);
+            sendAlert(`${sys.interval} ${sys.id.replace('ak_', '').toUpperCase()}`, data.signal, data.price);
             lastAlerts.current[sys.id] = data.signal;
           }
-        } else if (data) {
-          lastAlerts.current[sys.id] = '';
         }
 
         return { id: sys.id, data };
@@ -247,7 +300,7 @@ export default function App() {
   }, []);
 
   // Get the most recent price from any active system
-  const currentPrice = state.momentum?.price || state.volatility?.price || state.trend?.price;
+  const currentPrice = state.ak_1m?.price || state.ak_5m?.price || state.ak_15m?.price || state.ak_1h?.price || state.ak_4h?.price;
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans p-8 lg:p-12 overflow-hidden">
@@ -284,7 +337,7 @@ export default function App() {
       </header>
 
       {/* Main Grid */}
-      <main className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <main className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <AnimatePresence mode="popLayout">
           {SYSTEMS.map((sys) => (
             <motion.div
@@ -365,12 +418,12 @@ export default function App() {
       </main>
 
       {/* Footer Info */}
-      <footer className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-8 border-t border-[#141414] pt-8">
+      <footer className="mt-12 grid grid-cols-1 md:grid-cols-4 gap-8 border-t border-[#141414] pt-8">
         <div className="flex items-center gap-4">
           <BarChart3 className="w-6 h-6 text-emerald-500 opacity-50" />
           <div>
             <div className="text-xs font-mono opacity-40 uppercase">Strategy</div>
-            <div className="text-sm">Momentum + Volatility + Trend Intelligence</div>
+            <div className="text-sm">AK MACD BB Multi-Timeframe Intelligence</div>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -378,6 +431,36 @@ export default function App() {
           <div>
             <div className="text-xs font-mono opacity-40 uppercase">Status</div>
             <div className="text-sm">Live Scanning {liteMode ? '(Lite)' : 'Active'}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <ShieldAlert className={`w-6 h-6 ${lastSentAlert ? 'text-amber-500' : 'text-zinc-500 opacity-30'}`} />
+          <div>
+            <div className="text-xs font-mono opacity-40 uppercase flex items-center gap-2">
+              Last Alert Sent
+              {alertStatus?.loading && <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />}
+            </div>
+            <div className="text-sm font-mono">
+              {lastSentAlert ? (
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400">
+                      {lastSentAlert.systemId.toUpperCase()}: {lastSentAlert.signal} @ ${lastSentAlert.price.toLocaleString()}
+                    </span>
+                    <button 
+                      onClick={() => sendAlert(lastSentAlert.systemId, lastSentAlert.signal, lastSentAlert.price)}
+                      disabled={alertStatus?.loading}
+                      className="text-[10px] bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 px-2 py-0.5 rounded border border-amber-500/30 transition-colors disabled:opacity-50"
+                    >
+                      RESEND
+                    </button>
+                  </div>
+                  <span className="text-[10px] opacity-60">
+                    WA: {alertStatus?.whatsapp || '...'} | TG: {alertStatus?.telegram || '...'}
+                  </span>
+                </div>
+              ) : 'NO ALERTS SENT YET'}
+            </div>
           </div>
         </div>
         <div className="text-right">
